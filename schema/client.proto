@@ -1,0 +1,42 @@
+syntax = "proto3";
+option go_package = "schema";
+package raft;
+
+import "google/api/annotations.proto";
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/any.proto";
+
+message UPD {
+    string id = 1;
+    google.protobuf.Any body = 2;
+}
+
+message ID {
+    string id = 1;
+}
+
+
+service Client {
+    rpc Create(google.protobuf.Any) returns (UPD) {
+        option (google.api.http) = {
+          post: "/v1/create"
+          body: "*"
+        };
+    }
+    rpc Read(ID) returns (google.protobuf.Any) {
+        option (google.api.http) = {
+          get: "/v1/read/{id}"
+        };
+    }
+    rpc Update(UPD) returns (UPD) {
+        option (google.api.http) = {
+          put: "/v1/update/{id}"
+          body: "*"
+        };
+    }
+    rpc Delete(ID) returns (ID) {
+        option (google.api.http) = {
+          delete: "/v1/delete/{id}"
+        };
+    }
+}

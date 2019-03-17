@@ -1,0 +1,37 @@
+syntax = "proto3";
+option go_package = "schema";
+package raft;
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/any.proto";
+
+message AppendEntriesInput {
+    int32 term = 1;
+    google.protobuf.StringValue leaderId = 2;
+    int32 prevLogIndex = 3;
+    int32 prevLogTerm = 4;
+    repeated google.protobuf.Any entries = 5;
+    int32 leaderCommit = 6;
+}
+
+message AppendEntriesOutput {
+    int32 term = 1;
+    bool success = 2;
+}
+
+message RequestVoteInput {
+    int32 term = 1;
+    google.protobuf.StringValue candidateId = 2;
+    int32 lastLogIndex = 3;
+    int32 lastLogTerm = 4;
+}
+
+message RequestVoteOutput {
+    int32 term = 1;
+    bool voteGranted = 2;
+}
+
+service Node {
+    rpc RequestVote(RequestVoteInput) returns (RequestVoteOutput);
+    rpc AppendEntries(AppendEntriesInput) returns (AppendEntriesOutput);
+}
