@@ -6,11 +6,11 @@ import (
 )
 
 type Entry struct {
-	Term int
+	Term int32
 	data map[string]interface{}
 }
 
-func EntryFromBytes(data []byte, term int) (*Entry, error) {
+func EntryFromBytes(data []byte, term int32) (*Entry, error) {
 	var newEntry map[string]interface{}
 	err := json.Unmarshal(data, &newEntry)
 	if err != nil {
@@ -32,14 +32,14 @@ type Log struct {
 	sync.Mutex
 }
 
-func (l *Log) LastIndex() int {
-	l.Lock()
-	defer l.Unlock()
+func (l *Log) lastIndex() int {
 	return len(l.entries) - 1
 }
 
 func (l *Log) EntryByIndex(i int) *IndexedEntry {
-	lastIndex := l.LastIndex()
+	l.Lock()
+	defer l.Unlock()
+	lastIndex := l.lastIndex()
 	if lastIndex > i {
 		return nil
 	}
@@ -50,7 +50,7 @@ func (l *Log) EntryByIndex(i int) *IndexedEntry {
 }
 
 func (l *Log) LastEntry() *IndexedEntry {
-	lastIndex := l.LastIndex()
+	lastIndex := l.lastIndex()
 	return l.EntryByIndex(lastIndex)
 }
 

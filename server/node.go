@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -29,14 +30,10 @@ func randomTime(min, max int) time.Duration {
 	return time.Millisecond * time.Duration(min+rand.Intn(max-min+1))
 }
 
-func randomTimeout(min, max int) {
-	time.Sleep(randomTime(min, max))
-}
-
 type Node struct {
 	term      *int32
 	state     *int32
-	votedFor  uuid.UUID
+	votedFor  *uuid.UUID
 	id        uuid.UUID
 	log       *log.Log
 	heartbeat chan time.Time
@@ -61,31 +58,34 @@ func (n *Node) AppendEntries(ctx context.Context, input *schemapb.AppendEntriesI
 		}, nil
 	}
 	// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
-	// FIXME
-	lastLogEntry := n.log.EntryByIndex(int(input.PrevLogIndex))
-	if lastLogEntry != nil || lastLogEntry.Term != int(input.PrevLogTerm) {
-		return &schemapb.AppendEntriesOutput{
-			Term:    atomic.LoadInt32(n.term),
-			Success: false,
-		}, nil
-	}
-	// If an existing entry conflicts with a new one (same index but different terms),
-	// delete the existing entry and all that follow it
-	// TODO
-
-	// Append any new entries not already in the log
-	var entries = make([]log.Entry, len(input.Entries))
-	for i, e := range input.Entries {
-		entry, err := log.EntryFromBytes(e.GetValue(), int(atomic.LoadInt32(n.term)))
-		if err != nil {
-			return nil, err
-		}
-		entries[i] = *entry
-	}
-	n.log.AppendEntries(entries)
+	//// FIXME
+	//lastLogEntry := n.log.EntryByIndex(int(input.PrevLogIndex))
+	//if lastLogEntry != nil || lastLogEntry.Term != input.PrevLogTerm {
+	//	return &schemapb.AppendEntriesOutput{
+	//		Term:    atomic.LoadInt32(n.term),
+	//		Success: false,
+	//	}, nil
+	//}
+	//// If an existing entry conflicts with a new one (same index but different terms),
+	//// delete the existing entry and all that follow it
+	//// TODO
+	//
+	//// Append any new entries not already in the log
+	//var entries = make([]log.Entry, len(input.Entries))
+	//for i, e := range input.Entries {
+	//	entry, err := log.EntryFromBytes(e.GetValue(), atomic.LoadInt32(n.term))
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//	entries[i] = *entry
+	//}
+	//n.log.AppendEntries(entries)
 	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
 	// TODO
-	return nil, nil
+	return &schemapb.AppendEntriesOutput{
+		Term:    atomic.LoadInt32(n.term),
+		Success: true,
+	}, nil
 }
 
 /**
@@ -97,19 +97,22 @@ logs. If the logs have last entries with different terms, then the log with the 
 end with the same term, then whichever log is longer is more up-to-date.
 */
 func (n *Node) RequestVote(ctx context.Context, input *schemapb.RequestVoteInput) (*schemapb.RequestVoteOutput, error) {
-	//if n.log.LastTerm >= int(input.LastLogTerm) && n.log.LastIndex > int(input.LastLogIndex) {
-	//	votedFor, err := uuid.FromBytes([]byte(input.CandidateId.GetValue()))
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//	n.RunAsFollower(ctx)
-	//	n.term = int(input.Term)
-	//	n.votedFor = votedFor
-	//	return &schemapb.RequestVoteOutput{
-	//		Term: int64(n.term),
-	//		VoteGranted:true,
-	//	}, nil
-	//}
+	out.Printf("Request vote: %#v", input)
+	if input.Term > atomic.LoadInt32(n.term) || (input.Term == atomic.LoadInt32(n.term) && n.votedFor == nil) {
+		atomic.StoreInt32(n.term, input.Term)
+		lastLogEntry := n.log.LastEntry()
+		if input.LastLogTerm >= int32(lastLogEntry.Term) && input.LastLogIndex >= int32(lastLogEntry.Index) {
+			uid, err := uuid.Parse(input.CandidateId.String())
+			if err != nil {
+				return nil, err
+			}
+			n.votedFor = &uid
+			return &schemapb.RequestVoteOutput{
+				Term:        atomic.LoadInt32(n.term),
+				VoteGranted: true,
+			}, nil
+		}
+	}
 	return &schemapb.RequestVoteOutput{
 		Term:        atomic.LoadInt32(n.term),
 		VoteGranted: false,
@@ -123,7 +126,7 @@ to all followers in order to maintain their authority. If a follower receives no
 called the election timeout, then it assumes there is no viable leader and begins an election to choose a new leader.
 */
 func (n *Node) RunAsFollower(ctx context.Context) {
-	out.Infof("Change role to Follower. Term: %d\n", n.term)
+	out.Infof("Change role to Follower. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Follower)
 	go func() {
 		timer := time.NewTimer(randomTime(1500, 2000))
@@ -138,9 +141,9 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 			select {
 			case <-timer.C:
 				timeout := randomTime(1500, 2000)
-				cctx, cancel := context.WithTimeout(ctx, timeout)
+				cctx, _ := context.WithTimeout(ctx, timeout)
 				timer.Reset(timeout)
-				n.RunAsCandidate(cctx, cancel)
+				n.RunAsCandidate(cctx)
 			case <-n.heartbeat:
 				timer.Reset(randomTime(1500, 2000))
 			}
@@ -152,55 +155,69 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 To begin an election, a follower increments its current term and transitions to candidate state. It then votes for
 itself and issues RequestVote RPCs in parallel to each of the other servers in the cluster.
 A candidate continues in this state until one of three things happens:
-	- (a) it wins the election
-	- (b) another server establishes itself as leader
-	- (c) a period of time goes by with no winner
+- (a) it wins the election
+- (b) another server establishes itself as leader
+- (c) a period of time goes by with no winner
 */
-func (n *Node) RunAsCandidate(ctx context.Context, cancelFunc context.CancelFunc) {
+func (n *Node) RunAsCandidate(ctx context.Context) {
 	atomic.AddInt32(n.term, 1)
-	out.Infof("Change role to Candidate. Term: %d\n", n.term)
+	n.votedFor = nil
+
+	out.Infof("Change role to Candidate. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Candidate)
-	var count *int32
+
+	//store current term
+	term := atomic.LoadInt32(n.term)
+
+	var count = int32(0)
+	wg := sync.WaitGroup{}
 	for _, c := range n.clients {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+			lastLogEntry := n.log.LastEntry()
+			out.Println("Sending request")
 			output, err := c.RequestVote(ctx, &schemapb.RequestVoteInput{
-				Term:        atomic.LoadInt32(n.term),
-				CandidateId: &wrappers.StringValue{Value: n.id.String()},
-				//LastLogIndex:
-				//LastLogTerm:
+				Term:         term,
+				CandidateId:  &wrappers.StringValue{Value: n.id.String()},
+				LastLogIndex: int32(lastLogEntry.Index),
+				LastLogTerm:  int32(lastLogEntry.Term),
 			})
 			if err != nil {
 				out.Error(err)
+				return
 			}
-			if output.VoteGranted {
-				atomic.AddInt32(count, 1)
-			}
-			if consensus.Reached(int(atomic.LoadInt32(count)), len(n.clients)) {
-				// it wins the election
-				n.RunAsLeader(context.Background())
-				cancelFunc()
+
+			if output.VoteGranted && output.Term == atomic.LoadInt32(n.term) {
+				atomic.AddInt32(&count, 1)
 			}
 		}()
+	}
+	wg.Wait()
+	if atomic.LoadInt32(n.term) == term && consensus.Reached(int(atomic.LoadInt32(&count)), len(n.clients)) {
+		// it wins the election
+		n.RunAsLeader(context.Background())
 	}
 }
 
 /**
-Send heartbeat to all of the followers
+Once a candidate wins an election, it becomes leader. It then sends heartbeat messages to all of
+the other servers to establish its authority and prevent new elections.
 */
 func (n *Node) RunAsLeader(ctx context.Context) {
-	out.Infof("Change role to Leader. Term: %d\n", n.term)
+	out.Infof("Change role to Leader. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Leader)
 	timer := time.NewTimer(time.Millisecond * randomTime(min, max))
 	go func() {
 		for {
 			<-timer.C
+			lastLogEntry := n.log.LastEntry()
 			for _, c := range n.clients {
 				_, err := c.AppendEntries(ctx, &schemapb.AppendEntriesInput{
-					Term:     atomic.LoadInt32(n.term),
-					LeaderId: &wrappers.StringValue{Value: n.id.String()},
-					// TODO Change these 2 fields
-					//PrevLogIndex: nil,
-					//PrevLogTerm:  nil,
+					Term:         atomic.LoadInt32(n.term),
+					LeaderId:     &wrappers.StringValue{Value: n.id.String()},
+					PrevLogTerm:  lastLogEntry.Term,
+					PrevLogIndex: int32(lastLogEntry.Index),
 				})
 				if err != nil {
 					out.Error(err)
