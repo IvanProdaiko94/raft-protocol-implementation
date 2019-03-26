@@ -34,11 +34,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		err = node.InitClients(strings.Split(spec.NodesList, ","))
-		if err != nil {
-			panic(err)
-		}
 	}()
+
+	err := node.InitClients(strings.Split(spec.NodesList, ","))
+	if err != nil {
+		panic(err)
+	}
 
 	node.RunAsFollower(ctx)
 	<-stop

@@ -10,19 +10,13 @@
   version = "v0.9.0"
 
 [[projects]]
-  digest = "1:489a99067cd08971bd9c1ee0055119ba8febc1429f9200ab0bec68d35e8c4833"
+  digest = "1:e1b86a55f22a21007da87160a3e0897a35392af410d33ae82a4f165f1eec13cf"
   name = "github.com/golang/protobuf"
   packages = [
-    "jsonpb",
     "proto",
-    "protoc-gen-go/descriptor",
-    "protoc-gen-go/generator",
-    "protoc-gen-go/generator/internal/remap",
-    "protoc-gen-go/plugin",
     "ptypes",
     "ptypes/any",
     "ptypes/duration",
-    "ptypes/struct",
     "ptypes/timestamp",
     "ptypes/wrappers",
   ]
@@ -39,18 +33,6 @@
   version = "v1.1.1"
 
 [[projects]]
-  digest = "1:4cbbca3db0ff89197d000fb2fa0b90ca4516a7fbd4d8cd9fa4bebf17df484f6d"
-  name = "github.com/grpc-ecosystem/grpc-gateway"
-  packages = [
-    "internal",
-    "runtime",
-    "utilities",
-  ]
-  pruneopts = "UT"
-  revision = "20f268a412e5b342ebfb1a0eef7c3b7bd6c260ea"
-  version = "v1.8.5"
-
-[[projects]]
   digest = "1:edbef42561faa44c19129b68d1e109fbc1647f63239250391eadc8d0e7c9f669"
   name = "github.com/kelseyhightower/envconfig"
   packages = ["."]
@@ -60,9 +42,10 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:166293c9bbd7ee31d2fc8465823015ad49cf9949dfbbc55c26076ced4f054360"
+  digest = "1:4512c74e2c934a151fa9246cdc565d29611f53295bfb05e7a6275e80ee540a0c"
   name = "golang.org/x/net"
   packages = [
+    "context",
     "http/httpguts",
     "http2",
     "http2/hpack",
@@ -106,14 +89,9 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:6323af2277308b9ddced244cc284acf3579ef05bb9d199337d0b70d80efd1fa3"
+  digest = "1:c3076e7defee87de1236f1814beb588f40a75544c60121e6eb38b3b3721783e2"
   name = "google.golang.org/genproto"
-  packages = [
-    "googleapis/api/annotations",
-    "googleapis/api/httpbody",
-    "googleapis/rpc/status",
-    "protobuf/field_mask",
-  ]
+  packages = ["googleapis/rpc/status"]
   pruneopts = "UT"
   revision = "5fe7a883aa19554f42890211544aa549836af7b7"
 
@@ -166,14 +144,9 @@
     "github.com/golang/protobuf/ptypes/any",
     "github.com/golang/protobuf/ptypes/wrappers",
     "github.com/google/uuid",
-    "github.com/grpc-ecosystem/grpc-gateway/runtime",
-    "github.com/grpc-ecosystem/grpc-gateway/utilities",
     "github.com/kelseyhightower/envconfig",
-    "google.golang.org/genproto/googleapis/api/annotations",
+    "golang.org/x/net/context",
     "google.golang.org/grpc",
-    "google.golang.org/grpc/codes",
-    "google.golang.org/grpc/grpclog",
-    "google.golang.org/grpc/status",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -40,7 +40,7 @@ func (l *Log) EntryByIndex(i int) *IndexedEntry {
 	l.Lock()
 	defer l.Unlock()
 	lastIndex := l.lastIndex()
-	if lastIndex > i {
+	if lastIndex > i && lastIndex > -1 {
 		return nil
 	}
 	return &IndexedEntry{
@@ -51,13 +51,20 @@ func (l *Log) EntryByIndex(i int) *IndexedEntry {
 
 func (l *Log) LastEntry() *IndexedEntry {
 	lastIndex := l.lastIndex()
-	return l.EntryByIndex(lastIndex)
+	if lastIndex > -1 {
+		l.EntryByIndex(lastIndex)
+	}
+	return nil
 }
 
 func (l *Log) AppendEntries(entries []Entry) {
 	l.Lock()
 	l.entries = append(l.entries, entries...)
 	l.Unlock()
+}
+
+func (l *Log) IsEmpty() bool {
+	return len(l.entries) == 0
 }
 
 func New() *Log {
