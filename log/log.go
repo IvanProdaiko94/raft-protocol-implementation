@@ -2,6 +2,7 @@ package log
 
 import (
 	"encoding/json"
+	"github.com/golang/protobuf/ptypes/any"
 	"sync"
 )
 
@@ -38,7 +39,7 @@ func (l *Log) lastIndex() int {
 
 func (l *Log) EntryByIndex(i int) *IndexedEntry {
 	lastIndex := l.lastIndex()
-	if lastIndex > i && lastIndex > -1 {
+	if lastIndex > i || lastIndex == -1 {
 		return nil
 	}
 	return &IndexedEntry{
@@ -50,7 +51,7 @@ func (l *Log) EntryByIndex(i int) *IndexedEntry {
 func (l *Log) LastEntry() *IndexedEntry {
 	lastIndex := l.lastIndex()
 	if lastIndex > -1 {
-		l.EntryByIndex(lastIndex)
+		return l.EntryByIndex(lastIndex)
 	}
 	return nil
 }
@@ -63,6 +64,10 @@ func (l *Log) AppendEntries(entries []Entry) {
 
 func (l *Log) IsEmpty() bool {
 	return len(l.entries) == 0
+}
+
+func (l *Log) SolveConflicts(prevLogTerm, prevLogIndex int32, newEntries []*any.Any) {
+
 }
 
 func New() *Log {

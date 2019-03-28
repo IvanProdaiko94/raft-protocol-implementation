@@ -1,6 +1,7 @@
 package client
 
 import (
+	"github.com/IvanProdaiko94/raft-protocol-implementation/env"
 	schemapb "github.com/IvanProdaiko94/raft-protocol-implementation/schema"
 	"google.golang.org/grpc"
 	"log"
@@ -15,11 +16,11 @@ func CreateGRPC(address string) (schemapb.NodeClient, error) {
 	return schemapb.NewNodeClient(conn), nil
 }
 
-func CreateMultiple(addressList []string) ([]schemapb.NodeClient, error) {
+func CreateMultiple(nodes []env.Node) ([]schemapb.NodeClient, error) {
 	var err error
-	clients := make([]schemapb.NodeClient, len(addressList))
-	for i, address := range addressList {
-		clients[i], err = CreateGRPC(address)
+	clients := make([]schemapb.NodeClient, len(nodes))
+	for i, node := range nodes {
+		clients[i], err = CreateGRPC(node.Address)
 		if err != nil {
 			return nil, err
 		}

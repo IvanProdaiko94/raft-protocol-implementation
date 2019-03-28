@@ -4,10 +4,9 @@ import (
 	"context"
 	"github.com/IvanProdaiko94/raft-protocol-implementation/client"
 	"github.com/IvanProdaiko94/raft-protocol-implementation/consensus"
+	"github.com/IvanProdaiko94/raft-protocol-implementation/env"
 	nodelog "github.com/IvanProdaiko94/raft-protocol-implementation/log"
 	schemapb "github.com/IvanProdaiko94/raft-protocol-implementation/schema"
-	"github.com/golang/protobuf/ptypes/wrappers"
-	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"log"
 	"math/rand"
@@ -22,23 +21,29 @@ const (
 	Leader
 )
 
-var min = 150
-var max = 300
-
-func randomTime(min, max int) time.Duration {
+func getRandomTime(min, max int) time.Duration {
 	rand.Seed(time.Now().UnixNano())
-	return time.Millisecond * time.Duration(min+rand.Intn(max-min+1))
+	return time.Duration(min + rand.Intn(max-min+1))
+}
+
+func generateRequestTimout() time.Duration {
+	return time.Millisecond * getRandomTime(150, 300)
+}
+
+func generateRandomElectionTimeout() time.Duration {
+	return time.Millisecond * getRandomTime(1500, 2000)
 }
 
 type Node struct {
 	term      *int32
 	state     *int32
-	votedFor  *uuid.UUID
-	id        uuid.UUID
+	votedFor  *int32
+	id        int32
 	log       *nodelog.Log
 	heartbeat chan time.Time
 	clients   []schemapb.NodeClient
 	server    *grpc.Server
+	address   string
 }
 
 /**
@@ -50,42 +55,37 @@ then the candidate rejects the RPC and continues in candidate state.
 */
 func (n *Node) AppendEntries(ctx context.Context, input *schemapb.AppendEntriesInput) (*schemapb.AppendEntriesOutput, error) {
 	n.heartbeat <- time.Now()
-	// Reply false if term < currentTerm
-	if atomic.LoadInt32(n.term) < input.Term {
+
+	var respond = func(success bool, err error) (*schemapb.AppendEntriesOutput, error) {
 		return &schemapb.AppendEntriesOutput{
-			Term:    atomic.LoadInt32(n.term),
-			Success: false,
-		}, nil
+			Term:    atomic.LoadInt32(n.state),
+			Success: success,
+		}, err
 	}
-	// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
-	//// FIXME
-	//lastLogEntry := n.log.EntryByIndex(int(input.PrevLogIndex))
-	//if lastLogEntry != nil || lastLogEntry.Term != input.PrevLogTerm {
-	//	return &schemapb.AppendEntriesOutput{
-	//		Term:    atomic.LoadInt32(n.term),
-	//		Success: false,
-	//	}, nil
-	//}
-	//// If an existing entry conflicts with a new one (same index but different terms),
-	//// delete the existing entry and all that follow it
-	//// TODO
-	//
-	//// Append any new entries not already in the log
-	//var entries = make([]log.Entry, len(input.Entries))
-	//for i, e := range input.Entries {
-	//	entry, err := log.EntryFromBytes(e.GetValue(), atomic.LoadInt32(n.term))
-	//	if err != nil {
-	//		return nil, err
-	//	}
-	//	entries[i] = *entry
-	//}
-	//n.log.AppendEntries(entries)
-	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
-	// TODO
-	return &schemapb.AppendEntriesOutput{
-		Term:    atomic.LoadInt32(n.term),
-		Success: true,
-	}, nil
+
+	// reject the request since input term is less then current one
+	if input.Term < atomic.LoadInt32(n.term) {
+		return respond(false, nil)
+	}
+
+	// Reply false if log does not contain an entry at prevLogIndex whose term matches prevLogTerm
+	if prevEntry := n.log.EntryByIndex(int(input.PrevLogIndex)); prevEntry != nil && prevEntry.Term != input.PrevLogTerm {
+		return respond(false, nil)
+	}
+
+	// Downgrade to follower if input.Term > currentTerm
+	if input.Term >= atomic.LoadInt32(n.term) {
+		atomic.StoreInt32(n.term, input.Term)
+		atomic.StoreInt32(n.state, Follower)
+		atomic.StoreInt32(n.votedFor, input.LeaderId)
+		defer n.RunAsFollower(context.Background())
+	}
+
+	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it
+	// Append any new entries not already in the log
+	n.log.SolveConflicts(input.PrevLogTerm, input.PrevLogIndex, input.Entries)
+
+	return respond(true, nil)
 }
 
 /**
@@ -98,25 +98,38 @@ end with the same term, then whichever log is longer is more up-to-date.
 */
 func (n *Node) RequestVote(ctx context.Context, input *schemapb.RequestVoteInput) (*schemapb.RequestVoteOutput, error) {
 	log.Printf("\nRequest vote: %d", input.Term)
-	if input.Term > atomic.LoadInt32(n.term) || (input.Term == atomic.LoadInt32(n.term) && n.votedFor == nil) {
-		atomic.StoreInt32(n.term, input.Term)
-		lastLogEntry := n.log.LastEntry()
-		if n.log.IsEmpty() || input.LastLogTerm >= int32(lastLogEntry.Term) && input.LastLogIndex >= int32(lastLogEntry.Index) {
-			uid, err := uuid.Parse(input.CandidateId.String())
-			if err != nil {
-				return nil, err
-			}
-			n.votedFor = &uid
-			return &schemapb.RequestVoteOutput{
-				Term:        atomic.LoadInt32(n.term),
-				VoteGranted: true,
-			}, nil
-		}
+
+	var respond = func(voteGranted bool, err error) (*schemapb.RequestVoteOutput, error) {
+		return &schemapb.RequestVoteOutput{
+			Term:        atomic.LoadInt32(n.state),
+			VoteGranted: voteGranted,
+		}, err
 	}
-	return &schemapb.RequestVoteOutput{
-		Term:        atomic.LoadInt32(n.term),
-		VoteGranted: false,
-	}, nil
+
+	// reject the request since input term is less then current one
+	if input.Term < atomic.LoadInt32(n.term) {
+		return respond(false, nil)
+	}
+
+	// already voted in this term
+	if n.votedFor != nil {
+		return respond(false, nil)
+	}
+
+	// Reply false if log does not contain an entry at prevLogIndex whose term matches prevLogTerm
+	if prevEntry := n.log.EntryByIndex(int(input.LastLogIndex)); prevEntry != nil && prevEntry.Term != input.LastLogTerm {
+		return respond(false, nil)
+	}
+
+	// Downgrade to follower if input.Term > currentTerm
+	if input.Term >= atomic.LoadInt32(n.term) {
+		atomic.StoreInt32(n.term, input.Term)
+		atomic.StoreInt32(n.state, Follower)
+		atomic.StoreInt32(n.votedFor, input.CandidateId)
+		defer n.RunAsFollower(context.Background())
+	}
+
+	return respond(true, nil)
 }
 
 /**
@@ -129,7 +142,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	log.Printf("\nChange role to Follower. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Follower)
 	go func() {
-		timer := time.NewTimer(randomTime(1500, 2000))
+		timer := time.NewTimer(generateRandomElectionTimeout())
 		for {
 			// do not check heartbeats or election timeout.
 			// If there appears another leader it will force to RunAsFollower once again.
@@ -140,17 +153,20 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 			}
 			select {
 			case <-timer.C:
-				timeout := randomTime(1500, 2000)
+				timeout := generateRandomElectionTimeout()
 				cctx, _ := context.WithTimeout(ctx, timeout)
 				timer.Reset(timeout)
 				n.RunAsCandidate(cctx)
 			case <-n.heartbeat:
-				timer.Reset(randomTime(1500, 2000))
+				timer.Reset(generateRandomElectionTimeout())
 			}
 		}
 	}()
 }
 
+/**
+Send request vote RPC to clients
+*/
 func (n *Node) sendRequestVote(ctx context.Context, client schemapb.NodeClient) (*schemapb.RequestVoteOutput, error) {
 	term := atomic.LoadInt32(n.term)
 	//lastLogEntry := n.log.LastEntry()
@@ -162,7 +178,7 @@ func (n *Node) sendRequestVote(ctx context.Context, client schemapb.NodeClient) 
 	//}
 	return client.RequestVote(ctx, &schemapb.RequestVoteInput{
 		Term:        term,
-		CandidateId: &wrappers.StringValue{Value: n.id.String()},
+		CandidateId: n.id,
 		//LastLogIndex: int32(lastLogEntry.Index),
 		//LastLogTerm:  int32(lastLogEntry.Term),
 	})
@@ -187,7 +203,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	wg := sync.WaitGroup{}
 	for _, c := range n.clients {
 		wg.Add(1)
-		ticker := time.NewTicker(randomTime(min, max))
+		ticker := time.NewTicker(generateRequestTimout())
 		go func(c *schemapb.NodeClient) {
 			defer wg.Done()
 			defer ticker.Stop()
@@ -199,7 +215,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 				case <-ticker.C:
 					output, err := n.sendRequestVote(ctx, *c)
 					if err != nil {
-						log.Printf("Error %s", err)
+						log.Printf("Error %s", err.Error())
 					} else {
 						if output.VoteGranted && output.Term == atomic.LoadInt32(n.term) {
 							atomic.AddInt32(&count, 1)
@@ -211,9 +227,11 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 		}(&c)
 	}
 	wg.Wait()
-	log.Println("Check election results")
-	if atomic.LoadInt32(n.term) == term && consensus.Reached(int(atomic.LoadInt32(&count)), len(n.clients)) {
-		// it wins the election
+
+	willNodeBecomeALeader := atomic.LoadInt32(n.term) == term && consensus.Reached(int(atomic.LoadInt32(&count)), len(n.clients))
+	log.Printf("Check election results. Node be a leader %t", willNodeBecomeALeader)
+	// it wins the election
+	if willNodeBecomeALeader {
 		n.RunAsLeader(context.Background())
 	}
 }
@@ -225,32 +243,47 @@ the other servers to establish its authority and prevent new elections.
 func (n *Node) RunAsLeader(ctx context.Context) {
 	log.Printf("\nChange role to Leader. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Leader)
-	timer := time.NewTimer(randomTime(min, max))
 	go func() {
+		ticker := time.NewTicker(generateRequestTimout())
+		defer ticker.Stop()
+
+		term := atomic.LoadInt32(n.term)
 		for {
-			<-timer.C
-			log.Println("XXXX")
+			<-ticker.C
+			/**
+			If term has changed since last time, this means that there is a new leader emerged and node
+			accepted it. Thus this node should change it state to follower
+			*/
+			if atomic.LoadInt32(n.term) > term {
+				return
+			}
+
 			lastLogEntry := n.log.LastEntry()
 			if lastLogEntry == nil {
-				lastLogEntry = &nodelog.IndexedEntry{Index: -1, Entry: nodelog.Entry{Term: atomic.LoadInt32(n.term)}}
+				lastLogEntry = &nodelog.IndexedEntry{Index: -1, Entry: nodelog.Entry{Term: term}}
 			}
 			for _, c := range n.clients {
-				_, err := c.AppendEntries(ctx, &schemapb.AppendEntriesInput{
+				output, err := c.AppendEntries(ctx, &schemapb.AppendEntriesInput{
 					Term:         atomic.LoadInt32(n.term),
-					LeaderId:     &wrappers.StringValue{Value: n.id.String()},
+					LeaderId:     n.id,
 					PrevLogTerm:  lastLogEntry.Term,
 					PrevLogIndex: int32(lastLogEntry.Index),
 				})
 				if err != nil {
-					log.Fatalln(err)
+					log.Printf("Error: %s", err.Error())
+				} else {
+					if output.Term > atomic.LoadInt32(n.term) {
+						n.RunAsFollower(context.Background())
+						return
+					}
 				}
 			}
 		}
 	}()
 }
 
-func (n *Node) Launch(addr string) error {
-	if err := Listen(n.server, addr); err != nil {
+func (n *Node) Launch() error {
+	if err := Listen(n.server, n.address); err != nil {
 		return err
 	}
 	return nil
@@ -260,7 +293,7 @@ func (n *Node) Stop() {
 	n.server.GracefulStop()
 }
 
-func (n *Node) InitClients(addressList []string) (err error) {
+func (n *Node) InitClients(addressList []env.Node) (err error) {
 	n.clients, err = client.CreateMultiple(addressList)
 	if err != nil {
 		return err
@@ -268,16 +301,21 @@ func (n *Node) InitClients(addressList []string) (err error) {
 	return nil
 }
 
-func New() *Node {
+func New(config env.Node) *Node {
 	state := int32(Follower)
 	term := int32(0)
+	votedFor := int32(config.ID)
+
 	n := &Node{
-		state:     &state,
 		term:      &term,
-		id:        uuid.New(),
-		heartbeat: make(chan time.Time),
+		state:     &state,
+		votedFor:  &votedFor,
+		id:        config.ID,
 		log:       nodelog.New(),
+		heartbeat: make(chan time.Time),
+		address:   config.Address,
 	}
+
 	n.server = CreateGRPC(n)
 	return n
 }

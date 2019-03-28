@@ -2,12 +2,11 @@ syntax = "proto3";
 option go_package = "schema";
 package raft;
 
-import "google/protobuf/wrappers.proto";
 import "google/protobuf/any.proto";
 
 message AppendEntriesInput {
     int32 term = 1;
-    google.protobuf.StringValue leaderId = 2;
+    int32 leaderId = 2;
     int32 prevLogIndex = 3;
     int32 prevLogTerm = 4;
     repeated google.protobuf.Any entries = 5;
@@ -21,7 +20,7 @@ message AppendEntriesOutput {
 
 message RequestVoteInput {
     int32 term = 1;
-    google.protobuf.StringValue candidateId = 2;
+    int32 candidateId = 2;
     int32 lastLogIndex = 3;
     int32 lastLogTerm = 4;
 }
