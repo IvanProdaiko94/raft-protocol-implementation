@@ -2,14 +2,6 @@
 
 
 [[projects]]
-  digest = "1:b5738e353db21329ecf3c5fb6a4c3dc496b55850bb0c013d09d658afaae44035"
-  name = "github.com/dvln/out"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "2c6f5fb68e836be4b7700f5d6cf99829c404d521"
-  version = "v0.9.0"
-
-[[projects]]
   digest = "1:e1b86a55f22a21007da87160a3e0897a35392af410d33ae82a4f165f1eec13cf"
   name = "github.com/golang/protobuf"
   packages = [
@@ -139,7 +131,6 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
-    "github.com/dvln/out",
     "github.com/golang/protobuf/proto",
     "github.com/golang/protobuf/ptypes/any",
     "github.com/golang/protobuf/ptypes/wrappers",

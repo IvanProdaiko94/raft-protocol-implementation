@@ -4,12 +4,12 @@ import (
 	"context"
 	"github.com/IvanProdaiko94/raft-protocol-implementation/client"
 	"github.com/IvanProdaiko94/raft-protocol-implementation/consensus"
-	"github.com/IvanProdaiko94/raft-protocol-implementation/log"
+	nodelog "github.com/IvanProdaiko94/raft-protocol-implementation/log"
 	schemapb "github.com/IvanProdaiko94/raft-protocol-implementation/schema"
-	"github.com/dvln/out"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -35,7 +35,7 @@ type Node struct {
 	state     *int32
 	votedFor  *uuid.UUID
 	id        uuid.UUID
-	log       *log.Log
+	log       *nodelog.Log
 	heartbeat chan time.Time
 	clients   []schemapb.NodeClient
 	server    *grpc.Server
@@ -97,7 +97,7 @@ logs. If the logs have last entries with different terms, then the log with the 
 end with the same term, then whichever log is longer is more up-to-date.
 */
 func (n *Node) RequestVote(ctx context.Context, input *schemapb.RequestVoteInput) (*schemapb.RequestVoteOutput, error) {
-	out.Infof("\nRequest vote: %d", input.Term)
+	log.Printf("\nRequest vote: %d", input.Term)
 	if input.Term > atomic.LoadInt32(n.term) || (input.Term == atomic.LoadInt32(n.term) && n.votedFor == nil) {
 		atomic.StoreInt32(n.term, input.Term)
 		lastLogEntry := n.log.LastEntry()
@@ -126,7 +126,7 @@ to all followers in order to maintain their authority. If a follower receives no
 called the election timeout, then it assumes there is no viable leader and begins an election to choose a new leader.
 */
 func (n *Node) RunAsFollower(ctx context.Context) {
-	out.Infof("\nChange role to Follower. Term: %d\n", atomic.LoadInt32(n.term))
+	log.Printf("\nChange role to Follower. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Follower)
 	go func() {
 		timer := time.NewTimer(randomTime(1500, 2000))
@@ -134,7 +134,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 			// do not check heartbeats or election timeout.
 			// If there appears another leader it will force to RunAsFollower once again.
 			if atomic.LoadInt32(n.state) == Leader {
-				out.Infoln("Timer stopped")
+				log.Println("Timer stopped")
 				timer.Stop()
 				return
 			}
@@ -151,6 +151,23 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	}()
 }
 
+func (n *Node) sendRequestVote(ctx context.Context, client schemapb.NodeClient) (*schemapb.RequestVoteOutput, error) {
+	term := atomic.LoadInt32(n.term)
+	//lastLogEntry := n.log.LastEntry()
+	//if lastLogEntry == nil {
+	//	lastLogEntry = &log.IndexedEntry{
+	//		Index: -1,
+	//		Entry: log.Entry{Term: term},
+	//	}
+	//}
+	return client.RequestVote(ctx, &schemapb.RequestVoteInput{
+		Term:        term,
+		CandidateId: &wrappers.StringValue{Value: n.id.String()},
+		//LastLogIndex: int32(lastLogEntry.Index),
+		//LastLogTerm:  int32(lastLogEntry.Term),
+	})
+}
+
 /**
 To begin an election, a follower increments its current term and transitions to candidate state. It then votes for
 itself and issues RequestVote RPCs in parallel to each of the other servers in the cluster.
@@ -162,40 +179,39 @@ A candidate continues in this state until one of three things happens:
 func (n *Node) RunAsCandidate(ctx context.Context) {
 	atomic.AddInt32(n.term, 1)
 	n.votedFor = nil
-
-	out.Printf("\nChange role to Candidate. Term: %d\n", atomic.LoadInt32(n.term))
+	log.Printf("\nChange role to Candidate. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Candidate)
-
+	count := int32(0)
 	term := atomic.LoadInt32(n.term)
-	var count = int32(0)
+
 	wg := sync.WaitGroup{}
 	for _, c := range n.clients {
 		wg.Add(1)
-		go func() {
+		ticker := time.NewTicker(randomTime(min, max))
+		go func(c *schemapb.NodeClient) {
 			defer wg.Done()
-			lastLogEntry := n.log.LastEntry()
-			if lastLogEntry == nil {
-				lastLogEntry = &log.IndexedEntry{
-					Index: -1,
-					Entry: log.Entry{Term: term},
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					log.Println("Election timeout deadline")
+					return
+				case <-ticker.C:
+					output, err := n.sendRequestVote(ctx, *c)
+					if err != nil {
+						log.Printf("Error %s", err)
+					} else {
+						if output.VoteGranted && output.Term == atomic.LoadInt32(n.term) {
+							atomic.AddInt32(&count, 1)
+						}
+						return
+					}
 				}
 			}
-			output, err := c.RequestVote(ctx, &schemapb.RequestVoteInput{
-				Term:         term,
-				CandidateId:  &wrappers.StringValue{Value: n.id.String()},
-				LastLogIndex: int32(lastLogEntry.Index),
-				LastLogTerm:  int32(lastLogEntry.Term),
-			})
-			if err != nil {
-				out.Error(err)
-				return
-			}
-			if output.VoteGranted && output.Term == atomic.LoadInt32(n.term) {
-				atomic.AddInt32(&count, 1)
-			}
-		}()
+		}(&c)
 	}
 	wg.Wait()
+	log.Println("Check election results")
 	if atomic.LoadInt32(n.term) == term && consensus.Reached(int(atomic.LoadInt32(&count)), len(n.clients)) {
 		// it wins the election
 		n.RunAsLeader(context.Background())
@@ -207,15 +223,16 @@ Once a candidate wins an election, it becomes leader. It then sends heartbeat me
 the other servers to establish its authority and prevent new elections.
 */
 func (n *Node) RunAsLeader(ctx context.Context) {
-	out.Infof("\nChange role to Leader. Term: %d\n", atomic.LoadInt32(n.term))
+	log.Printf("\nChange role to Leader. Term: %d\n", atomic.LoadInt32(n.term))
 	atomic.StoreInt32(n.state, Leader)
-	timer := time.NewTimer(time.Millisecond * randomTime(min, max))
+	timer := time.NewTimer(randomTime(min, max))
 	go func() {
 		for {
 			<-timer.C
+			log.Println("XXXX")
 			lastLogEntry := n.log.LastEntry()
 			if lastLogEntry == nil {
-				lastLogEntry = &log.IndexedEntry{Index: -1, Entry: log.Entry{Term: atomic.LoadInt32(n.term)}}
+				lastLogEntry = &nodelog.IndexedEntry{Index: -1, Entry: nodelog.Entry{Term: atomic.LoadInt32(n.term)}}
 			}
 			for _, c := range n.clients {
 				_, err := c.AppendEntries(ctx, &schemapb.AppendEntriesInput{
@@ -225,7 +242,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 					PrevLogIndex: int32(lastLogEntry.Index),
 				})
 				if err != nil {
-					out.Error(err)
+					log.Fatalln(err)
 				}
 			}
 		}
@@ -259,7 +276,7 @@ func New() *Node {
 		term:      &term,
 		id:        uuid.New(),
 		heartbeat: make(chan time.Time),
-		log:       log.New(),
+		log:       nodelog.New(),
 	}
 	n.server = CreateGRPC(n)
 	return n

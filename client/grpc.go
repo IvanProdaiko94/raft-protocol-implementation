@@ -2,14 +2,14 @@ package client
 
 import (
 	schemapb "github.com/IvanProdaiko94/raft-protocol-implementation/schema"
-	"github.com/dvln/out"
 	"google.golang.org/grpc"
+	"log"
 )
 
 func CreateGRPC(address string) (schemapb.NodeClient, error) {
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
-		out.Fatalf("did not connect: %s", err)
+		log.Fatalf("did not connect: %s", err)
 		return nil, err
 	}
 	return schemapb.NewNodeClient(conn), nil

@@ -2,8 +2,8 @@ package server
 
 import (
 	schemapb "github.com/IvanProdaiko94/raft-protocol-implementation/schema"
-	"github.com/dvln/out"
 	"google.golang.org/grpc"
+	"log"
 	"net"
 )
 
@@ -16,7 +16,7 @@ func CreateGRPC(n *Node) *grpc.Server {
 func Listen(server *grpc.Server, addr string) error {
 	listen, err := net.Listen("tcp", addr)
 	if err != nil {
-		out.Fatal(err)
+		log.Fatal(err)
 	}
 	return server.Serve(listen)
 }

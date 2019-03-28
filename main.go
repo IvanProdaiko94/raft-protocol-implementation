@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"github.com/IvanProdaiko94/raft-protocol-implementation/server"
-	"github.com/dvln/out"
 	"github.com/kelseyhightower/envconfig"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -29,7 +29,7 @@ func main() {
 
 	var node = server.New()
 	go func() {
-		out.Infof("Starting gRPC server at address: %s\n", spec.NodeAddress)
+		log.Printf("\nStarting gRPC server at address: %s\n", spec.NodeAddress)
 		err := node.Launch(spec.NodeAddress)
 		if err != nil {
 			panic(err)
@@ -44,6 +44,6 @@ func main() {
 	node.RunAsFollower(ctx)
 	<-stop
 
-	out.Infoln("Shutting down gRPC server")
+	log.Println("Shutting down gRPC server")
 	node.Stop()
 }

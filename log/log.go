@@ -37,8 +37,6 @@ func (l *Log) lastIndex() int {
 }
 
 func (l *Log) EntryByIndex(i int) *IndexedEntry {
-	l.Lock()
-	defer l.Unlock()
 	lastIndex := l.lastIndex()
 	if lastIndex > i && lastIndex > -1 {
 		return nil
