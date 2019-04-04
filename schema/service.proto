@@ -2,15 +2,32 @@ syntax = "proto3";
 option go_package = "schema";
 package raft;
 
-import "google/protobuf/any.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+
+message Command {
+    string action = 1;
+    map<string, string> data = 2;
+}
+
+message Entry {
+    int32 term = 1;
+    Command data = 2;
+}
+
+message Log {
+    int32 term = 1;
+    string state = 2;
+    repeated Entry entries = 3;
+}
 
 message AppendEntriesInput {
     int32 term = 1;
     int32 leaderId = 2;
     int32 prevLogIndex = 3;
     int32 prevLogTerm = 4;
-    repeated google.protobuf.Any entries = 5;
-    int32 leaderCommit = 6;
+    int32 leaderCommit = 5;
+    repeated Entry entries = 6;
 }
 
 message AppendEntriesOutput {
@@ -30,7 +47,14 @@ message RequestVoteOutput {
     bool voteGranted = 2;
 }
 
+message PushResponse {
+    bool success = 1;
+    int32 leader = 2;
+}
+
 service Node {
+    rpc NewEntry(Command) returns (PushResponse);
+    rpc GetLog(google.protobuf.Empty) returns (Log);
     rpc RequestVote(RequestVoteInput) returns (RequestVoteOutput);
     rpc AppendEntries(AppendEntriesInput) returns (AppendEntriesOutput);
 }

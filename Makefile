@@ -10,3 +10,6 @@ gen:
       --go_out=plugins=grpc:. \
       --grpc-gateway_out=logtostderr=true:. \
       schema/service.proto
+
+test:
+	@go test ./...

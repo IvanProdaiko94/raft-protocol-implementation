@@ -8,22 +8,22 @@ type Node struct {
 var Cluster = []Node{
 	{
 		ID:      0,
-		Address: "localhost:4000",
+		Address: "localhost:10000",
 	},
 	{
 		ID:      1,
-		Address: "localhost:4001",
+		Address: "localhost:10001",
 	},
 	{
 		ID:      2,
-		Address: "localhost:4002",
+		Address: "localhost:10002",
 	},
 	//{
-	//	ID:	3,
-	//	Address: "localhost:4003",
+	//	ID:      3,
+	//	Address: "localhost:10003",
 	//},
 	//{
-	//	ID:	4,
-	//	Address: "localhost:4004",
+	//	ID:      4,
+	//	Address: "localhost:10004",
 	//},
 }
