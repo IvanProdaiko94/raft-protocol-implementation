@@ -20,6 +20,13 @@ will ever apply a different log entry for the same index.
 
 ## Info about implementation
 - Each server launches rpc server
-- Communication with client is done via [raft http clinent](https://github.com/IvanProdaiko94/raft-protocol-implementation-client) or you can do it directly via [evans](https://github.com/ktr0731/evans)
+- Communication with client is done via [raft http client](https://github.com/IvanProdaiko94/raft-protocol-implementation-client) or you can do it directly via [evans](https://github.com/ktr0731/evans)
 - Creating new entry is done via leader node, other nodes will respond with no success and leader id.
 - Each node could reveil log via `GetLog` rpc call. (this is done according to task requirements)
+
+## How to launch:
+
+- Install dependencies with `dep ensure`
+- Change number of nodes and set an unique ID to each in `env/env.go`
+- Run `main.go` with `ID=x` env variable set.
+- Run several processes to create cluster.
